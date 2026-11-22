@@ -1,0 +1,2232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>和 1965 年的 ELIZA 聊天</title>
+<style>
+/* Layout idea: one column, a sheet of fan-fold printer paper as the transcript,
+   each reply followed by a fold-out showing which rule produced it. */
+:root {
+  --bg: #eef1ea;
+  --paper: #fbfcf8;
+  --band: #e9f0e3;
+  --ink: #18211d;
+  --muted: #56645d;
+  --rule: #c7d1c4;
+  --accent: #1f4b99;
+  --accent-ink: #ffffff;
+  --mark: #ffe08a;
+  --mark-ink: #3a2c00;
+  --font-ui: system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+  --lh: 1.7rem;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101512;
+    --paper: #171d19;
+    --band: #1d2621;
+    --ink: #e4ebe5;
+    --muted: #9aa8a0;
+    --rule: #2f3b35;
+    --accent: #9dbcff;
+    --accent-ink: #0b1220;
+    --mark: #6b5200;
+    --mark-ink: #ffe9a8;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101512;
+  --paper: #171d19;
+  --band: #1d2621;
+  --ink: #e4ebe5;
+  --muted: #9aa8a0;
+  --rule: #2f3b35;
+  --accent: #9dbcff;
+  --accent-ink: #0b1220;
+  --mark: #6b5200;
+  --mark-ink: #ffe9a8;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.65;
+}
+.wrap {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 16px 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+h1 {
+  font-size: 1.5rem;
+  line-height: 1.3;
+  margin: 0;
+  text-wrap: balance;
+}
+h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 38rem; }
+.head { display: flex; flex-direction: column; gap: 0.5rem; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+code, .mono { font-family: var(--font-mono); }
+
+/* the three mechanisms */
+.layers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.layers li {
+  border-top: 2px solid var(--ink);
+  padding-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.layers b { color: var(--ink); font-size: 0.95rem; }
+@media (max-width: 34rem) {
+  .layers { grid-template-columns: 1fr; }
+}
+
+/* the sheet */
+.sheet {
+  position: relative;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--paper) 0,
+    var(--paper) calc(var(--lh) * 3),
+    var(--band) calc(var(--lh) * 3),
+    var(--band) calc(var(--lh) * 6)
+  );
+  border: 1px solid var(--rule);
+  padding: var(--lh) 2.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  line-height: var(--lh);
+  min-height: calc(var(--lh) * 9);
+}
+.sheet::before, .sheet::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1.5rem;
+  background: radial-gradient(circle, var(--bg) 0, var(--bg) 0.26rem, transparent 0.3rem) center top / 1.5rem var(--lh) repeat-y;
+}
+.sheet::before { left: 0; border-right: 1px dashed var(--rule); }
+.sheet::after { right: 0; border-left: 1px dashed var(--rule); }
+.turn {
+  display: grid;
+  grid-template-columns: 3.6rem 1fr;
+  column-gap: 0.5rem;
+  overflow-wrap: anywhere;
+}
+.who {
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+}
+.turn.eliza .line { font-weight: 600; letter-spacing: 0.02em; }
+.gap { height: var(--lh); }
+
+/* fold-out under each reply */
+.xray {
+  font-family: var(--font-ui);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  margin: 0 0 var(--lh) 4.1rem;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+}
+.xray summary {
+  cursor: pointer;
+  padding: 0.35rem 0.6rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+.xray .body {
+  padding: 0.1rem 0.6rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.xray .row { display: grid; grid-template-columns: 4.6rem 1fr; column-gap: 0.5rem; }
+.xray .k { color: var(--muted); }
+.xray .v { overflow-wrap: anywhere; }
+.xray .verdict { font-weight: 600; }
+.tok { font-family: var(--font-mono); font-size: 0.84rem; }
+.chip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  border: 1px solid var(--rule);
+  padding: 0 0.4rem;
+  margin: 0 0.3rem 0.2rem 0;
+  border-radius: 2px;
+}
+.chip.win { background: var(--mark); color: var(--mark-ink); border-color: transparent; font-weight: 700; }
+.chip small { font-family: var(--font-ui); opacity: 0.8; }
+@media (max-width: 34rem) {
+  .sheet { padding: var(--lh) 1.75rem; font-size: 0.9rem; }
+  .turn { grid-template-columns: 2.9rem 1fr; }
+  .xray { margin-left: 0; }
+  .xray .row { grid-template-columns: 4.2rem 1fr; }
+}
+
+/* state strip and controls */
+.state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  align-items: center;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+.pips { display: inline-flex; gap: 0.25rem; vertical-align: middle; margin: 0 0.35rem; }
+.pip { width: 0.7rem; height: 0.7rem; border: 1.5px solid var(--ink); border-radius: 50%; }
+.pip.on { background: var(--ink); }
+.pip.four.on { background: var(--mark); border-color: var(--mark-ink); }
+.state b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+form.say { display: flex; gap: 0.5rem; }
+form.say input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  padding: 0.6rem 0.7rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 0.55rem 0.9rem;
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+}
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: 0.55; cursor: default; }
+.tries { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.tries button { font-family: var(--font-mono); font-size: 0.85rem; padding: 0.35rem 0.6rem; }
+.tries .label { font-size: 0.88rem; color: var(--muted); }
+.hint { font-size: 0.85rem; color: var(--muted); min-height: 1.4em; }
+.controls { display: flex; flex-direction: column; gap: 0.6rem; }
+
+/* notes */
+.notes { display: flex; flex-direction: column; gap: 1rem; border-top: 1px solid var(--rule); padding-top: 1.25rem; }
+.notes section { display: flex; flex-direction: column; gap: 0.4rem; }
+.notes ul { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.notes p, .notes li { font-size: 0.92rem; }
+.small { font-size: 0.82rem; color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <h1>和 1965 年的 ELIZA 聊几句</h1>
+    <p class="lede">ELIZA 通常被认为是第一个聊天机器人。它不理解任何一句话，只做三件事。用英文打一句试试，每句回复下面可以展开，看它命中了哪条规则。</p>
+  </header>
+
+  <ol class="layers">
+    <li><b>1　找关键词</b>句子里可能有好几个关键词，每个带一个级别，级别最高的那个说了算。</li>
+    <li><b>2　拆开再拼回去</b>按模板把句子拆成几段，把“我”换成“你”，填进预先写好的句式。</li>
+    <li><b>3　偶尔翻旧话</b>你说过的“my …”会被存起来。没有关键词、计数器又正好走到 4 时，它翻出最早的一句。</li>
+  </ol>
+
+  <div class="sheet" id="sheet" aria-live="polite"></div>
+
+  <div class="controls">
+    <div class="state" id="state"></div>
+    <form class="say" id="say" autocomplete="off">
+      <label class="sr" for="q">用英文输入一句话</label>
+      <input id="q" type="text" inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="200" placeholder="用英文打一句话，回车发送">
+      <button class="primary" id="send" type="submit">发送</button>
+    </form>
+    <div class="hint" id="hint"></div>
+    <div class="tries">
+      <span class="label">不知道说什么：</span>
+      <button type="button" id="demo">按顺序演示三层机关</button>
+      <button type="button" class="try" data-say="Men are all alike.">Men are all alike.</button>
+      <button type="button" class="try" data-say="I am unhappy.">I am unhappy.</button>
+      <button type="button" id="reset">重新开始</button>
+    </div>
+  </div>
+
+  <div class="notes">
+    <section>
+      <h2>这里运行的是什么</h2>
+      <ul>
+        <li><b>剧本</b>是 2021 年在 MIT 档案馆找到的那份打印件里、紧跟在源码后面的 DOCTOR 剧本，页眉日期 03/06，推定为 1965 年 3 月 6 日。它有 35 个关键词，由魏岑鲍姆的遗产方以 CC0 开放。</li>
+        <li><b>引擎</b>是 Anthony Hay 和 Max Hay 用 JavaScript 写的复刻（CC0），代码原样嵌入，没有改动。它按 1966 年论文的描述实现，并在源码找到后做过校正。</li>
+        <li><b>这不是原始代码本身。</b>那 420 行左右的 MAD-SLIP 源码要在模拟的 IBM 7094 和 CTSS 系统上才能运行，见下面的链接。</li>
+      </ul>
+    </section>
+    <section>
+      <h2>核对过什么</h2>
+      <p>复原团队在模拟的 IBM 7094 上运行原程序和这份剧本，留下了一段 15 句的对话记录。把同样的 15 句输入这个页面的引擎，回复逐词一致，只有标点前的空格不同（原机会在标点前多打一个空格）。15 句一致不等于每种输入都一致。</p>
+    </section>
+    <section>
+      <h2>和原机的差别</h2>
+      <ul>
+        <li>原机遇到带数字的输入可能崩溃或卡死，这里不会。</li>
+        <li>原机可以输入“+”进入修改剧本的模式，这里没有。</li>
+        <li>引擎多实现了 1966 年论文里才有的几项功能（关键词栈、NEWKEY、PRE），这份 1965 年的剧本用不到它们。</li>
+      </ul>
+    </section>
+    <section>
+      <h2>为什么和论文里那段著名对话对不上</h2>
+      <p>1966 年论文附的是一份更晚、更大的剧本，有 66 个关键词。这份 1965 年的剧本里还没有 ALIKE 这个关键词，所以对 “Men are all alike.” 的回答是另一句。想试 1966 年的剧本，可以去 Hay 的页面：<a href="https://anthay.github.io/eliza.html" target="_blank" rel="noopener">anthay.github.io/eliza.html</a>。</p>
+    </section>
+    <section>
+      <h2>来源</h2>
+      <ul>
+        <li>原始源码（转录稿和扫描件）：<a href="https://github.com/jeffshrager/elizagen.org/tree/master/1965_Weizenbaum_MAD-SLIP" target="_blank" rel="noopener">github.com/jeffshrager/elizagen.org</a>，打印件扫描：<a href="https://hdl.handle.net/1721.3/201699" target="_blank" rel="noopener">MIT 图书馆</a></li>
+        <li>在模拟的 IBM 7094 上运行原程序：<a href="https://github.com/rupertl/eliza-ctss" target="_blank" rel="noopener">github.com/rupertl/eliza-ctss</a></li>
+        <li>本页引擎与剧本转录：<a href="https://github.com/anthay/ELIZA" target="_blank" rel="noopener">github.com/anthay/ELIZA</a></li>
+        <li>复原过程：Lane, Hay, Schwarz, Berry, Shrager,《ELIZA Reanimated》, <a href="https://arxiv.org/abs/2501.06707" target="_blank" rel="noopener">arXiv:2501.06707</a></li>
+      </ul>
+    </section>
+    <p class="small">ELIZA 扮演的是一位心理咨询师，但它只是一段规则匹配程序，不能提供心理支持。你输入的内容只在你自己的浏览器里处理，不会发送到任何地方。</p>
+  </div>
+</div>
+
+<!-- DOCTOR script, TAPE 100, from the 1965 printout in Joseph Weizenbaum's MIT archive
+     (document 02-000311051). Released under CC0 by the Weizenbaum estate.
+     Verbatim transcription by Anthony Hay (whitespace changed for readability). -->
+<script type="text/plain" id="tape100">
+(HOW DO YOU DO.  I AM THE DOCTOR.  PLEASE SIT DOWN AT THE TYPEWRITER AND TELL ME YOUR PROBLEM.)
+
+(IF 3
+    ((0 IF 0)
+        (DO YOU THINK ITS LIKELY THAT 3)
+        (DO YOU WISH THAT 3)
+        (WHAT DO YOU THINK ABOUT 3)
+        (REALLY, 2 3)))
+
+(HOW
+    (=WHAT))
+
+(WHEN
+    (=WHAT))
+
+(MEMORY MY
+    (0 YOUR 0 = LETS DISCUSS FURTHER WHY YOUR 3)
+    (0 YOUR 0 = EARLIER YOU SAID YOUR 3)
+    (0 YOUR 0 = BUT YOUR 3)
+    (0 YOUR 0 = DOES THAT HAVE ANYTHING TO DO WITH THE FACT THAT YOUR 3))
+
+(NONE
+    ((0)
+        (I AM NOT SURE I UNDERSTAND YOU FULLY)
+        (PLEASE GO ON)
+        (WHAT DOES THAT SUGGEST TO YOU)
+        (DO YOU FEEL STRONGLY ABOUT DISCUSSING SUCH THINGS)))
+
+(PERHAPS
+    ((0)
+        (YOU DON'T SEEM QUITE CERTAIN)
+        (WHY THE UNCERTAIN TONE)
+        (CAN'T YOU BE MORE POSITIVE)
+        (YOU AREN'T SURE)
+        (DON'T YOU KNOW)))
+
+(MAYBE
+    (=PERHAPS))
+
+(AM = ARE
+    ((0 ARE YOU 0)
+        (DO YOU BELIEVE YOU ARE 4)
+        (WOULD YOU WANT TO BE 4)
+        (YOU WISH I WOULD TELL YOU YOU ARE 4)
+        (WHAT WOULD IT MEAN IF YOU WERE 4))
+    ((0)
+        (WHY DO YOU SAY 'AM')
+        (I DON'T UNDERSTAND THAT)))
+
+(ARE = AM
+    ((0 AM I 0)
+        (WHY ARE YOU INTERESTED IN WHETHER I AM 4 OR NOT)
+        (WOULD YOU PREFER IF I WEREN'T 4)
+        (PERHAPS I AM 4 IN YOUR FANTASIES)
+        (DO YOU SOMETIMES THINK I AM 4))
+    ((0 AM 0)
+        (DID YOU THINK THEY MIGHT NOT BE 3)
+        (WOULD YOU LIKE IT IF THEY WERE NOT 3)
+        (WHAT IF THEY WERE NOT 3)
+        (POSSIBLY THEY ARE 3)))
+
+(YOUR = MY
+    ((0 MY 0)
+        (WHY ARE YOU CONCERNED OVER MY 3)
+        (WHAT ABOUT YOUR OWN 3)
+        (ARE YOU WORRIED ABOUT SOMEONE ELSES 3)
+        (REALLY, MY 3)))
+
+(WAS = WERE)
+(WERE = WAS)
+(ME = YOU)
+(YOU'RE = I'M)
+(I'M = YOU'RE)
+(MYSELF = YOURSELF)
+(YOURSELF = MYSELF)
+
+(MOTHER DLIST(/NOUN FAMILY))
+(FATHER DLIST(/NOUN FAMILY))
+(SISTER DLIST(/FAMILY))
+(BROTHER DLIST(/FAMILY))
+(WIFE DLIST(/FAMILY))
+(CHILDREN DLIST(/FAMILY))
+
+(I = YOU
+    ((0 YOU ARE 0 I 0)
+        (PERHAPS YOU ARE 4 SOMEONE ELSE)
+        (ARE YOU 4 ANYONE)
+        (ARE YOU 4 ANYONE IN YOUR FAMILY)
+        (PERHAPS YOU WISH I WERE 4 YOU 6))
+    ((0 YOU ARE 0)
+        (IS IT BECAUSE YOU ARE 4 THAT YOU CAME TO ME)
+        (HOW LONG HAVE YOU BEEN 4)
+        (DO YOU BELIEVE IT NORMAL TO BE 4)
+        (DO YOU ENJOY BEING 4))
+    ((0 YOU CAN'T 0)
+        (HOW DO YOU KNOW YOU CAN'T 4)
+        (HAVE YOU TRIED)
+        (PERHAPS YOU COULD 4 NOW)
+        (DO YOU REALLY WANT TO BE ABLE TO 4))
+    ((0 YOU DON'T 0)
+        (DON'T YOU REALLY 4)
+        (WHY DON'T YOU 4)
+        (DO YOU WISH TO BE ABLE TO 4)
+        (DOES THAT TROUBLE YOU))
+    ((0 YOU FEEL 0)
+        (TELL ME MORE ABOUT SUCH FEELINGS)
+        (DO YOU OFTEN FEEL 4)
+        (DO YOU ENJOY FEELING 4)
+        (OF WHAT DOES FEELING 4 REMIND YOU))
+    ((0 YOU 0 I 0)
+        (PERHAPS IN YOUR FANTASY WE 3 EACH OTHER)
+        (DO YOU WISH TO 3 ME)
+        (YOU SEEM TO NEED TO 3 ME)
+        (DO YOU 3 ANYONE ELSE))
+    ((0)
+        (YOU SAY 1)
+        (CAN YOU ELABORATE ON THAT)
+        (DO YOU SAY 1 FOR SOME SPECIAL REASON)
+        (THAT'S QUITE INTERESTING)))
+
+(YOU = I
+    ((0 I 0 YOU 0)
+        (WHY DO YOU THINK I 3 YOU)
+        (DID YOUR PARENTS 3 YOU))
+    ((0 I AM 0)
+        (WHAT MAKES YOU THINK I AM 4)
+        (DOES IT PLEASE YOU TO BELIEVE I AM 4)
+        (DO YOU SOMETIMES WISH YOU WERE 4)
+        (PERHAPS YOU WOULD LIKE TO BE 4))
+    ((0 I 0)
+        (WE WERE DISCUSSING YOU - NOT ME)
+        (OH, I 3)
+        (YOU'RE NOT REALLY TALKING ABOUT ME - ARE YOU)
+        (WHAT ARE YOUR FEELINGS NOW)))
+
+(YES
+    ((0)
+        (YOU SEEM QUITE POSITIVE)
+        (YOU ARE SURE)
+        (I SEE)
+        (I UNDERSTAND)))
+
+(NO
+    ((0)
+        (ARE YOU SAYING 'NO' JUST TO BE NEGATIVE)
+        (YOU ARE BEING A BIT NEGATIVE)
+        (WHY NOT)
+        (WHY 'NO')))
+
+(MY = YOUR
+    ((0 YOUR 0 (/FAMILY) 0)
+        (TELL ME MORE ABOUT YOUR FAMILY)
+        (WHO ELSE IN YOUR FAMILY 5)
+        (YOUR 4)
+        (WHAT ELSE COMES TO MIND WHEN YOU THINK OF YOUR 4))
+    ((0 YOUR 0)
+        (YOUR 3)
+        (WHY DO YOU SAY YOUR 3)
+        (DOES THAT SUGGEST ANYTHING ELSE WHICH BELONGS TO YOU)
+        (IS IT IMPORTANT TO YOU THAT 2 3)))
+
+(CAN
+    ((0 CAN I 0)
+        (YOU BELIEVE I CAN 4 DON'T YOU)
+        (YOU WANT BE TO BE ABLE TO 4)
+        (PERHAPS YOU WOULD LIKE TO BE ABLE TO 4 YOURSELF))
+    ((0 CAN YOU 0)
+        (WHETHER OR NOT YOU CAN 4 DEPENDS ON YOU MORE THAN ON ME)
+        (DO YOU WANT TO BE ABLE TO 4)
+        (PERHAPS YOU DON'T WANT TO 4)))
+
+(WHAT
+    ((0)
+        (WHY DO YOU ASK)
+        (DOES THAT QUESTION INTEREST YOU)
+        (WHAT IS IT YOU REALLY WANT TO KNOW)
+        (ARE SUCH QUESTIONS MUCH ON YOUR MIND)
+        (WHAT ANSWER WOULD PLEASE YOU MOST)
+        (WHAT DO YOU THINK)
+        (WHAT COMES TO YOUR MIND WHEN YOU ASK THAT)
+        (HAVE YOU ASKED SUCH QUESTIONS BEFORE)
+        (HAVE YOU ASKED ANYONE ELSE)))
+
+(BECAUSE
+    ((0)
+        (IS THAT THE REAL REASON)
+        (DON'T ANY OTHER REASONS COME TO MIND)
+        (DOES THAT REASON SEEM TO EXPLAIN ANYTHING ELSE)
+        (WHAT OTHER REASONS MIGHT THERE BE)))
+
+(WHY
+    ((0 WHY DON'T I 0)
+        (DO YOU BELIEVE I DON'T 5)
+        (PERHAPS I WILL 5 IN GOOD TIME)
+        (SHOULD YOU 5 YOURSELF)
+        (YOU WANT ME TO 5))
+    ((0 WHY CAN'T YOU 0)
+        (DO YOU THINK YOU SHOULD BE ABLE TO 5)
+        (DO YOU WANT TO BE ABLE TO 5)
+        (DO YOU BELIEVE THIS WILL HELP YOU TO 5)
+        (HAVE YOU ANY IDEA WHY YOU CAN'T 5))
+    (= WHAT))
+
+(EVERYONE 2
+    ((0)
+        (REALLY, EVERYONE)
+        (CAN YOU THINK OF ANYONE IN PARTICULAR)
+        (WHO, FOR EXAMPLE)
+        (YOU ARE THINKING OF A VERY SPECIAL PERSON)
+        (WHO, MAY I ASK)
+        (SOMEONE SPECIAL PERHAPS)
+        (YOU HAVE A PARTICULAR PERSON IN MIND, DON'T YOU)
+        (WHO DO YOU THINK YOU'RE TALKING ABOUT)))
+
+(EVERYBODY 2
+    (= EVERYONE))
+
+(NOBODY 2
+    (=EVERYONE))
+
+(NOONE 2
+    (=EVERYONE))
+
+(ALWAYS 1
+    ((0)
+        (CAN YOU THINK OF A SPECIFIC EXAMPLE)
+        (WHEN)
+        (WHAT INCIDENT ARE YOU THINKING OF)
+        (REALLY, ALWAYS)))
+
+()
+</script>
+
+<script>
+/* ---------------------------------------------------------------------------
+   ELIZA engine by Anthony Hay and Max Hay, CC0 1.0 (public domain).
+   Source: https://github.com/anthay/ELIZA  file src/eliza.html, version 1.00.
+   The two blocks below are lines 39-976 and 1478-1943 of that file, unmodified.
+   The built-in 1966 CACM script, the test-suite and the original page UI are
+   not included here.
+   --------------------------------------------------------------------------- */
+const VERSION = '1.00';
+
+
+//////// //       //// ////////    ///    //        ///////   //////   ////  //////  
+//       //        //       //    // //   //       //     // //    //   //  //    // 
+//       //        //      //    //   //  //       //     // //         //  //       
+//////   //        //     //    //     // //       //     // //   ////  //  //       
+//       //        //    //     ///////// //       //     // //    //   //  //       
+//       //        //   //      //     // //       //     // //    //   //  //    // 
+//////// //////// //// //////// //     // ////////  ///////   //////   ////  //////  
+
+
+const HOLLERITH_UNDEFINED = 0xFF; // (must be > 63)
+const HOLLERITHENCODING_TABLE_SIZE = 256;
+
+// This table maps ordinary character code units to their Hollerith
+// encoding, or HOLLERITH_UNDEFINED if that character does not exist
+// in the Hollerith character set.
+const hollerithEncoding = (() => {
+    // Define the static BCD array
+    const bcd = [
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 0, '=', '\'', 0, 0, 0,
+        '+', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 0, '.', ')',  0, 0, 0,
+        '-', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 0, '$', '*',  0, 0, 0,
+        ' ', '/', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 0, ',', '(',  0, 0, 0
+    ];
+
+    let toBcd = Array(HOLLERITHENCODING_TABLE_SIZE).fill(HOLLERITH_UNDEFINED);
+    for (let c = 0; c < 64; c++) {
+        if (bcd[c]) {
+            toBcd[bcd[c].charCodeAt(0)] = c;
+        }
+    }
+    return toBcd;
+})();
+
+// Return true iff given u8 is in the Hollerith character set
+function hollerithDefined(u8) {
+    console.assert(typeof(u8) === "number");
+    if (u8 >= HOLLERITHENCODING_TABLE_SIZE)
+        return false;
+    return hollerithEncoding[u8] !== HOLLERITH_UNDEFINED;
+}
+
+
+function utf32ArrayFromString(s) {
+    console.assert(typeof(s) === "string");
+    let result = [];
+    for (let i = 0; i < s.length; ) {
+        const u = s.charCodeAt(i++);
+        if (u < 0xd800)
+            result.push(u);
+        else if (u > 0xdfff)
+            result.push(u);
+        else {
+            console.assert(i < s.length);
+            const v = s.charCodeAt(i++);
+            result.push(0x10000 + (u - 0xd800) * 0x400 + (v - 0xdc00));
+        }
+    }
+    return result;
+}
+
+function utf8ArrayFromString(s) {
+    const encoder = new TextEncoder();
+    const utf8Array = encoder.encode(s);
+    return Array.from(utf8Array);
+}
+
+
+// return given string uppercased and with certain punctuation filtered
+function elizaUppercase(s) {
+    let result = "";
+    const nonBcdReplacementChar = '-';
+    const utf32 = utf32ArrayFromString(s);
+    for (let c32 of utf32) {
+        switch (c32) {
+        case 0x2019:        // 'RIGHT SINGLE QUOTATION MARK' (U+2019)
+            result += '\''; //   => 'APOSTROPHE' (U+0027)
+            break;          // [hoping I’m will become I'M, for example]
+
+        case 0x2018:        // 'LEFT SINGLE QUOTATION MARK' (U+2018)
+        case 0x0060:        // 'GRAVE ACCENT' (U+0060) [backtick]
+        case 0x0022:        // 'QUOTATION MARK' (U+0022)
+        case 0x00AB:        // 'LEFT-POINTING DOUBLE ANGLE QUOTATION MARK' (U+00AB)
+        case 0x00BB:        // 'RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK' (U+00BB)
+        case 0x201A:        // 'SINGLE LOW-9 QUOTATION MARK' (U+201A)
+        case 0x201B:        // 'SINGLE HIGH-REVERSED-9 QUOTATION MARK' (U+201B)
+        case 0x201C:        // 'LEFT DOUBLE QUOTATION MARK' (U+201C)
+        case 0x201D:        // 'RIGHT DOUBLE QUOTATION MARK' (U+201D)
+        case 0x201E:        // 'DOUBLE LOW-9 QUOTATION MARK' (U+201E)
+        case 0x201F:        // 'DOUBLE HIGH-REVERSED-9 QUOTATION MARK' (U+201F)
+        case 0x2039:        // 'SINGLE LEFT-POINTING ANGLE QUOTATION MARK' (U+2039)
+        case 0x203A:        // 'SINGLE RIGHT-POINTING ANGLE QUOTATION MARK' (U+203A)
+            result += ' ';  //   => 'SPACE' (U+0020)
+            break;
+
+        case 0x0021:        // 'EXCLAMATION MARK' (U+0021)
+        case 0x003F:        // 'QUESTION MARK' (U+003F)
+            result += '.';  //   => 'FULL STOP' (U+002E)
+            break;
+
+        case 0x00A1:        // 'INVERTED EXCLAMATION MARK' (U+00A1)
+        case 0x00BF:        // 'INVERTED QUESTION MARK' (U+00BF)
+            result += ' ';  //   => 'SPACE' (U+0020)
+            break;
+
+        case 0x003A:        // 'COLON' (U+003A)
+        case 0x003B:        // 'SEMICOLON' (U+003B)
+        case 0x2013:        // 'EN DASH' (U+2013)
+        case 0x2014:        // 'EM DASH' (U+2014)
+            result += ',';  //   => 'COMMA' (U+002C)
+            break;
+
+        default:
+            result += String.fromCodePoint(c32).toUpperCase();
+            break;
+        }
+    }
+    return result;
+}
+
+
+// Return true iff given c is delimiter (see delimiter())
+function delimiterCharacter(c) {
+    return c === ',' || c === '.';
+}
+
+
+// Return true iff given s is an ELIZA delimiter
+function delimiter(s) {
+    console.assert(typeof(s) === "string");
+    return s === "BUT" || (s.length === 1 && delimiterCharacter(s[0]));
+}
+
+
+// Split given string s into a list of "words"; delimiters are words
+// e.g. split("one   two, three.") -> ["one", "two", ",", "three", "."]
+function split(s) {
+    console.assert(typeof(s) === "string");
+    let result = [];
+    let word = "";
+    for (let ch of s) {
+        if (delimiterCharacter(ch) || ch === ' ') {
+            if (word) {
+                result.push(word);
+                word = "";
+            }
+            if (ch !== ' ') {
+                result.push(ch);
+            }
+        } else {
+            word += ch;
+        }
+    }
+    if (word) {
+        result.push(word);
+    }
+    return result;
+}
+
+
+// Join given words into one space separated string
+// e.g. join(["one", "two", "", "3"]) -> "one two 3"
+function join(words) {
+    console.assert(Array.isArray(words));
+    return words.filter(str => str.trim() !== "").join(" ");
+}
+
+
+// Return numeric value of given s or -1, e.g. toInt("2") -> 2, toInt("two") -> -1
+function toInt(s) {
+    console.assert(typeof(s) === "string");
+    let result = 0;
+    for (let c of s) {
+        if (!isNaN(c)) { // Check if character is a digit
+            result = 10 * result + parseInt(c);
+        } else {
+            return -1;
+        }
+    }
+    return result;
+}
+
+
+// e.g. inlist("DEPRESSED", "(*SAD HAPPY DEPRESSED)") -> true
+// e.g. inlist("FATHER", "(/FAMILY)") -> true (assuming tags("FAMILY") -> "... FATHER ...")
+function inlist(word, wordlist, tags) {
+    console.assert(typeof(word) === "string");
+    console.assert(typeof(wordlist) === "string");
+    console.assert(tags instanceof Map);
+    if (wordlist.endsWith(')')) {
+        wordlist = wordlist.slice(0, -1);
+    }
+    if (wordlist.startsWith('(')) {
+        wordlist = wordlist.substring(1);
+    }
+    wordlist = wordlist.trim();
+
+    if (wordlist.startsWith('*')) { // (*SAD HAPPY DEPRESSED)
+        // without bug:
+        //return wordlist.substring(1).trim().split(' ').includes(word);
+
+        // to recreate bug apparently in original SLIP YMATCH:
+        const t = wordlist.substring(1).trim().split(' ');
+        const word6 = word.substring(0, 6);
+        for (const w of t) {
+            for (let i = 0; i < w.length; i += 6) {
+                if (w.substring(i, i + 6) === word6)
+                    return true;
+            }
+        }
+        return false;
+    }
+    else if (wordlist.startsWith('/')) { // (/NOUN FAMILY)
+        const t = wordlist.substring(1).trim().split(' ');
+        for (const tag of t) {
+            if (tags.has(tag)) {
+                if (tags.get(tag).includes(word)) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+
+/*  return true iff words match pattern; if they match, matchingComponents
+    are the actual matched words, one for each element of pattern
+
+    e.g. match(tags, [0, YOU, (* WANT NEED), 0], [YOU, NEED, NICE, FOOD], mc) -> true
+      with mc = [<empty>, YOU, NEED, NICE FOOD]
+
+    Note that grouped words in pattern, such as (* WANT NEED), must be presented
+    as a single stringlist entry. */
+function match(tags, p, w) {
+    let pattern = p.slice();
+    let words = w.slice();
+
+    let matchingComponents = [];
+    if (pattern.length === 0) {
+        return [words.length === 0, matchingComponents];
+    }
+
+    let patword = pattern.shift();
+    let n = toInt(patword);
+
+    if (n < 0) { // patword is e.g. "ARE" or "(*SAD HAPPY DEPRESSED)"
+        if (words.length === 0) {
+            return [false]; // patword cannot match nothing
+        }
+        let currentWord = words.shift();
+        if (patword.startsWith('(')) {
+            // patword is a group, is currentWord in that group?
+            if (!inlist(currentWord, patword, tags)) {
+                return [false]; // patword cannot match nothing
+            }
+        } else if (patword !== currentWord) {
+            return [false]; // patword is a single word and it doesn't match
+        }
+
+        // so far so good; can we match remainder of pattern with remainder of words?
+        let [success, mc] = match(tags, pattern, words);
+        if (success) {
+            matchingComponents.push(currentWord);
+            matchingComponents.push(...mc);
+            return [true, matchingComponents];
+        }
+    } else if (n === 0) { // 0 matches zero or more of any words
+        let component = [];
+        let mc;
+        while (true) {
+            [success, mc] = match(tags, pattern, words);
+            if (success) {
+                matchingComponents.push(join(component));
+                matchingComponents.push(...mc);
+                return [true, matchingComponents];
+            }
+            if (words.length === 0) {
+                return [false];
+            }
+            component.push(words.shift());
+        }
+    } else { // match exactly n of any words [page 38 (a)]
+        if (words.length < n) {
+            return [false];
+        }
+        let component = [];
+        for (let i = 0; i < n; i++) {
+            component.push(words.shift());
+        }
+        let [success, mc] = match(tags, pattern, words);
+        if (success) {
+            matchingComponents.push(join(component));
+            matchingComponents.push(...mc);
+            return [true, matchingComponents];
+        }
+    }
+    return [false];
+}
+
+
+// return words constructed from given reassemblyRule and components
+// e.g. reassemble([ARE, YOU, 1], [MAD, ABOUT YOU]) -> [ARE, YOU, MAD]
+function reassemble(reassemblyRule, components) {
+    console.assert(Array.isArray(reassemblyRule));
+    console.assert(Array.isArray(components));
+    let result = [];
+    for (let r of reassemblyRule) {
+        let n = toInt(r);
+        if (n < 0) {
+            result.push(r);
+        } else if (n === 0 || n > components.length) {
+            // index out of range should never happen because indexes
+            // are checked when the script is processed
+            result.push("HMMM");
+        } else {
+            let expanded = split(components[n - 1]);
+            result = result.concat(expanded);
+        }
+    }
+    return result;
+}
+
+
+function reassemblyIndexesValid(decompositionRule, reassemblyRule) {
+    console.assert(Array.isArray(decompositionRule));
+    console.assert(Array.isArray(reassemblyRule));
+    let indexOutOfRangeMsg = '';
+    const lastDisassemblyPartIndex = decompositionRule.length;
+
+    for (const r of reassemblyRule) {
+        let n = toInt(r);
+        if (n < 0) {
+            continue; // it's not an index
+        }
+        if (n === 0 || n > lastDisassemblyPartIndex) {
+            indexOutOfRangeMsg = `reassembly index '${n}' out of range [1..${lastDisassemblyPartIndex}]`;
+            return [false, indexOutOfRangeMsg];
+        }
+    }
+
+    return [true, ''];
+}
+
+
+// recreate the SLIP HASH function: return an n-bit hash value for
+// the given 36-bit datum d, for values of n in range 0..15
+function hash(d, n) {
+    console.assert(0 <= n && n <= 15)
+
+    d &= BigInt("0x7FFFFFFFF");
+    d *= d;
+    d >>= 35n - BigInt(Math.floor(n / 2));
+    return Number(d & (BigInt(1) << BigInt(n)) - 1n);
+}
+
+
+// return the 36-bit Hollerith encoding of the word str, appropriately
+// space padded, or the last chunk of the word if over 6 characters long
+function lastChunkAsBcd(str) {
+    let result = BigInt(0);
+
+    const append = (u8) => {
+        result <<= BigInt(6);
+        if (hollerithDefined(u8))
+            result |= BigInt(hollerithEncoding[u8]);
+        else
+            result |= BigInt(u8) & BigInt(0x3F);
+    };
+
+    let count = 0;
+    if (str) {
+        const s = utf8ArrayFromString(str);
+        for (let c of s.slice(Math.floor((s.length - 1) / 6) * 6)) {
+            append(c);
+            count++;
+        }
+    }
+    while (count++ < 6) {
+        append(0x20); // space pad to six characters
+    }
+
+    return result;
+}
+
+
+
+const SPECIAL_RULE_NONE = "zNONE";
+
+const ACTION_INAPPLICABLE = 0; // no transformation could be performed
+const ACTION_COMPLETE     = 1; // transformation of input is complete
+const ACTION_NEWKEY       = 2; // request caller try next keyword in keystack
+const ACTION_LINKKEY      = 3; // request caller try returned keyword
+
+const TRACE_PREFIX = ' | ';
+
+
+// decomposition and associated reassembly rules
+class Transform {
+    constructor(decomposition = [], reassemblyRules = []) {
+        this.decomposition = decomposition;
+        this.reassemblyRules = reassemblyRules;
+        this.nextReassemblyRule = 0;
+    }
+};
+
+
+class RuleKeyword {
+    constructor(keyword = "", wordSubstitution = "", precedence = 0, tags = [], linkKeyword = "") {
+        this.keyword = keyword;
+        this.wordSubstitution = wordSubstitution;
+        this.precedence = precedence;
+        this.tags = tags;
+        this.linkKeyword = linkKeyword;
+        this.transforms = [];
+        this.trace = '';
+    }
+    setKeyword(keyword) {
+        this.keyword = keyword;
+    }
+    addTransformationRule(decomposition, reassemblyRules) {
+        this.transforms.push(new Transform(decomposition, reassemblyRules));
+    }
+    getPrecedence() {
+        return this.precedence;
+    }
+    getKeyword() {
+        return this.keyword;
+    }
+    applyWordSubstitution(word) {
+        if (!this.wordSubstitution || word !== this.keyword)
+            return word;
+        return this.wordSubstitution;
+    }
+    dlistTags() {
+        return this.tags;
+    }
+    hasTransformation() {
+        return this.transforms.length > 0 || !!this.linkKeyword;
+    }
+    applyTransformation(words, tags) {
+        this.trace =
+            TRACE_PREFIX + 'selected keyword: ' + this.keyword + '\n' +
+            TRACE_PREFIX + 'input: ' + join(words) + '\n';
+        let constituents = [];
+
+        let r = 0;
+        while (r < this.transforms.length) {
+            [success, constituents] = match(tags, this.transforms[r].decomposition, words);
+            if (success)
+                break;
+            r++;
+        }
+
+        if (r === this.transforms.length) {
+            if (this.linkKeyword.length === 0) {
+                this.trace += TRACE_PREFIX + 'ill-formed script? No decomposition rule matches\n';
+                return [ACTION_INAPPLICABLE]; // [page 39 (f)] should not happen?
+            }
+
+            this.trace += TRACE_PREFIX + 'reference to equivalence class: ' + this.linkKeyword + '\n';
+            return [ACTION_LINKKEY, words, this.linkKeyword];
+        }
+
+        let rule = this.transforms[r];
+        const reassemblyRule = rule.reassemblyRules[rule.nextReassemblyRule];
+
+        this.trace += TRACE_PREFIX + 'matching decompose pattern: (' + join(rule.decomposition) + ')\n';
+        this.trace += TRACE_PREFIX + 'decomposition parts: ';
+        for (let id = 0; id < constituents.length; ++id) {
+            if (id)
+                this.trace += ', ';
+            this.trace += (id + 1) + ':"' + constituents[id] + '"';
+        }
+        this.trace += '\n';
+        this.trace += TRACE_PREFIX + 'selected reassemble rule: (' + join(reassemblyRule) + ')\n';
+
+        rule.nextReassemblyRule++;
+        if (rule.nextReassemblyRule === rule.reassemblyRules.length) {
+            rule.nextReassemblyRule = 0;
+        }
+
+        if (reassemblyRule.length === 1 && reassemblyRule[0] === "NEWKEY") {
+            return [ACTION_NEWKEY];
+        }
+
+        if (reassemblyRule.length === 2 && reassemblyRule[0] === '=') {
+            return [ACTION_LINKKEY, words, reassemblyRule[1]];
+        }
+
+        // is it the special-case reassembly rule '( PRE ( reassembly ) ( =reference ) )'
+        // (note: this is the only reassemblyRule that is still in a list)
+        if (reassemblyRule.length !== 0 && reassemblyRule[0] === "(") {
+            console.assert(reassemblyRule[1] === "PRE");
+            console.assert(reassemblyRule[2] === "(");
+            let reassembly = [];
+            let i = 3;
+            while (reassemblyRule[i] !== ")") {
+                reassembly.push(reassemblyRule[i++]);
+            }
+            i += 3; // skip ')', '(' and '='
+            let link = reassemblyRule[i];
+            words = reassemble(reassembly, constituents);
+            return [ACTION_LINKKEY, words, link];
+        }
+
+        words = reassemble(reassemblyRule, constituents);
+        return [ACTION_COMPLETE, words];
+    }
+    toString() {
+        let sexp = "(";
+        sexp += (this.keyword === SPECIAL_RULE_NONE) ? "NONE" : this.keyword;
+
+        if (this.wordSubstitution !== "") {
+            sexp += " = " + this.wordSubstitution;
+        }
+
+        if (this.tags.length > 0) {
+            sexp += " DLIST(/" + join(this.tags) + ")";
+        }
+
+        if (this.precedence > 0) {
+            sexp += " " + this.precedence;
+        }
+
+        for (const k of this.transforms) {
+            sexp += "\n    ((" + join(k.decomposition) + ")";
+            for (const r of k.reassemblyRules) {
+                if (r.length !== 0 && r[0] == "(")
+                    sexp += "\n        " + join(r); // it's a PRE rule
+                else
+                    sexp += "\n        (" + join(r) + ")";
+            }
+            sexp += ")";
+        }
+
+        if (this.linkKeyword) {
+            sexp += "\n    (=" + this.linkKeyword + ")";
+        }
+
+        sexp += ")\n";
+        return sexp;
+    }
+    traceText() {
+        return this.trace;
+    }
+}
+
+
+class RuleMemory {
+    constructor(keyword = "") {
+        this.keyword = keyword;
+        this.transforms = [];
+        this.memories = [];
+        this.trace = '';
+    }
+    setKeyword(keyword) {
+        this.keyword = keyword;
+    }
+    addTransformationRule(decomposition, reassemblyRules) {
+        this.transforms.push(new Transform(decomposition, reassemblyRules));
+    }
+    empty() {
+        return !this.keyword || this.transforms.length === 0;
+    }
+    createMemory(keyword, words, tags) {
+        if (keyword !== this.keyword || words.length === 0) {
+            return;
+        }
+
+        // JW says rules are selected at random [page 41 (f)]
+        // But the ELIZA code shows that rules are actually selected via a HASH
+        // function on the last word of the user's input text.
+        console.assert(this.transforms.length === 4);
+        let transformation = this.transforms[hash(lastChunkAsBcd(words[words.length - 1]), 2)];
+        const [success, constituents] = match(tags, transformation.decomposition, words);
+        if (!success) {
+            this.trace += TRACE_PREFIX;
+            this.trace += "cannot form new memory: decomposition pattern (";
+            this.trace += join(transformation.decomposition);
+            this.trace += ") does not match user text\n";
+            return;
+        }
+        const newMemory = join(reassemble(transformation.reassemblyRules[0], constituents));
+        this.trace += TRACE_PREFIX + "new memory: " + newMemory + '\n';
+        this.memories.push(newMemory);
+    }
+    memoryExists() {
+        return this.memories.length > 0;
+    }
+    recallMemory() {
+        return this.memories.length ? this.memories.shift() : "";
+    }
+    toString() {
+        let sexp = "(MEMORY ";
+        sexp += this.keyword;
+        for (const k of this.transforms) {
+            sexp += "\n    (" + join(k.decomposition);
+            sexp += " = " + join(k.reassemblyRules[0]) + ")";
+        }
+        sexp += ")\n";
+        return sexp;
+    }
+    traceMemoryStack() {
+        let s = '';
+        if (this.memories.length === 0)
+            s += TRACE_PREFIX + 'memory queue: &lt;empty&gt;\n';
+        else {
+            s += TRACE_PREFIX + 'memory queue:\n';
+            for (const m of this.memories)
+                s += TRACE_PREFIX + '  ' + m + '\n';
+        }
+        return s;
+    }
+    clearTrace() {
+        this.trace = '';
+    }
+    traceText() {
+        return this.trace;
+    }
+}
+
+
+// collect all tags from any of the given rules that have them into a tagmap
+function collectTags(rules) {
+    let tags = new Map();
+    for (const [key, value] of rules) {
+        let keywordTags = value.tags;
+        for (const t of keywordTags) {
+            if (!tags.has(t))
+                tags.set(t, []);
+            tags.get(t).push(key);
+        }
+    }
+    return tags;
+}
+
+
+class nullTracer {
+    beginResponse(words) {}
+    limit(n, builtInMsg) {}
+    discardSubclause(words) {}
+    wordSubstitution(word, substitute) {}
+    subclauseComplete(subclause, keystack, rules) {}
+    memoryStack(t) {}
+    createMemory(t) {}
+    usingMemory(s) {}
+    preTransform(keyword, words) {}
+    transform(t, s) {}
+    unknownKey(keyword, useNomatchMessage) {}
+    decompFailed(useNomatchMessage) {}
+    newkeyFailed() {}
+    usingNone(s) {}
+    text() {
+        return '';
+    }
+    script() {
+        return '';
+    }
+}
+
+class preTracer extends nullTracer {
+    constructor (write) {
+        super();
+        this.print = write;
+    }
+    beginResponse(words) {}
+    limit(n, builtInMsg) {}
+    discardSubclause(words) {}
+    wordSubstitution(word, substitute) {}
+    subclauseComplete(subclause, keystack, rules) {}
+    memoryStack(t) {}
+    createMemory(t) {}
+    usingMemory(s) {}
+    preTransform(keyword, words) {
+        this.print(join(words) + '   :' + keyword);
+    }
+    transform(t, s) {}
+    unknownKey(keyword, useNomatchMessage) {}
+    decompFailed(useNomatchMessage) {}
+    newkeyFailed() {}
+    usingNone(s) {}
+    text() {
+        return '';
+    }
+    script() {
+        return '';
+    }
+}
+
+
+class Tracer extends nullTracer {
+    constructor() {
+        super();
+        this.txt = '';
+        this.scrip = '';
+        this.prefix = " | ";
+        this.wordSubstitutions = '';
+    }
+    beginResponse(words) {
+        this.txt = this.prefix + "input: " + join(words) + '\n';
+        this.scrip = '';
+        this.wordSubstitutions = '';
+    }
+    limit(n, builtInMsg) {
+        this.txt += this.prefix + "LIMIT: " + n + ' (' + builtInMsg + ')\n';
+    }
+    discardSubclause(words) {
+        this.txt += this.prefix + "word substitutions made: "
+            + (this.wordSubstitutions.length === 0 ? '&lt;none&gt;' : this.wordSubstitutions) + '\n';
+        this.txt += this.prefix + "no keywords found in subclause: " + join(words) + '\n';
+        this.wordSubstitutions = '';
+    }
+    wordSubstitution(word, substitute) {
+        if (substitute != word) {
+            if (this.wordSubstitutions.length !== 0)
+                this.wordSubstitutions += ', ';
+            this.wordSubstitutions += word + '/' + substitute;
+        }
+    }
+    subclauseComplete(subclause, keystack, rules) {
+        this.txt += this.prefix + "word substitutions made: "
+            + (this.wordSubstitutions.length === 0 ? '&lt;none&gt;' : this.wordSubstitutions) + '\n';
+        if (keystack.length === 0) {
+            if (subclause.length !== 0)
+                this.txt += this.prefix + "no keywords found in subclause: "
+                    + subclause + '\n'
+        }
+        else {
+            this.txt += this.prefix + "found keywords in subclause: " + subclause + '\n';
+            this.txt += this.prefix + "keyword(precedence) stack:";
+            let comma = false;
+            for (let keyword of keystack) {
+                this.txt += (comma ? ', ' : ' ') + keyword + '(';
+                if (rules.has(keyword)) {
+                    let rule = rules.get(keyword);
+                    if (rule.hasTransformation())
+                        this.txt += rule.precedence;
+                    else
+                        this.txt += "&lt;internal error: no transform associated with this keyword&gt;";
+                }
+                else
+                    this.txt += "&lt;internal error: unknown keyword&gt;";
+                this.txt += ')';
+                comma = true;
+            }
+            this.txt += '\n';
+        }
+    }
+    memoryStack(t) {
+        this.txt += t;
+    }
+    createMemory(t) {
+        this.txt += t;
+    }
+    usingMemory(s) {
+        this.txt += TRACE_PREFIX + 'LIMIT=4, (\"a certain counting mechanism is in a particular state\"),\n'
+                  + TRACE_PREFIX + '  and there are unused memories, so the response is the oldest of these\n';
+        this.scrip += s;
+    }
+    transform(t, s) {
+        this.txt += t;
+        this.scrip += s;
+    }
+    unknownKey(keyword, useNomatchMessage) {
+        this.txt += TRACE_PREFIX + 'ill-formed script? "' + keyword + '" is not a keyword\n';
+        if (useNomatchMessage)
+            this.txt += TRACE_PREFIX + 'response is the built-in NOMACH[LIMIT] message\n';
+    }
+    decompFailed(useNomatchMessage) {
+        this.txt += TRACE_PREFIX + 'ill-formed script? No decomposition rule matched input\n';
+        if (useNomatchMessage)
+            this.txt += TRACE_PREFIX + 'response is the built-in NOMACH[LIMIT] message\n';
+    }
+    newkeyFailed(responseSource) {
+        this.txt += TRACE_PREFIX + 'keyword stack empty; response is a ' + responseSource + ' message\n';
+    }
+    usingNone(s) {
+        this.txt += TRACE_PREFIX + 'response is the next remark from the NONE rule\n';
+        this.scrip += s;
+    }
+    text() {
+        return this.txt;
+    }
+    script() {
+        return this.scrip;
+    }
+}
+
+
+
+                //////// //       //// ////////    ///                    
+                //       //        //       //    // //                   
+                //       //        //      //    //   //                  
+///////////     //////   //        //     //    //     //     /////////// 
+                //       //        //    //     /////////                 
+                //       //        //   //      //     //                 
+                //////// //////// //// //////// //     //                 
+
+function delay() {
+    return new Promise((resolve, reject)=> {
+        setTimeout(() => {
+            resolve();
+        }, 0);
+    });
+}
+
+let globalInterruptElizaResponse = false;
+class Eliza {
+    constructor(rules, memoryRule, tracer, transformationLimit = 1000) {
+        this.rules = rules;
+        this.memoryRule = memoryRule;
+        this.tracer = tracer;
+        this.tags = collectTags(this.rules);
+        this.limit = 1; // (this is Weizenbaum's "a certain counting mechanism")
+        this.noMatchMessages = ["PLEASE CONTINUE", "HMMM", "GO ON , PLEASE", "I SEE"];
+        this.transformationLimit = transformationLimit;
+    }
+
+    // return ELIZA's response to the given input string
+    async response(input) {
+        console.assert(typeof(input) === "string");
+        let words = split(elizaUppercase(input));
+        this.tracer.beginResponse(words);
+
+        this.limit = (this.limit % 4) + 1;
+        this.tracer.limit(this.limit, this.noMatchMessages[this.limit - 1]);
+
+        let keystack = [];
+        let topRank = 0;
+        for (let i = 0; i < words.length; i++) {
+            let word = words[i];
+
+            if (delimiter(word)) {
+                if (keystack.length === 0) {
+                    this.tracer.discardSubclause(words.slice(0, i + 1));
+                    words = words.slice(i + 1);
+                    i = -1;
+                    continue;
+                } else {
+                    words = words.slice(0, i);
+                    break;
+                }
+            }
+
+            if (this.rules.has(word)) {
+                let rule = this.rules.get(word);
+                if (rule.hasTransformation()) {
+                    if (rule.precedence > topRank) {
+                        keystack.unshift(word);
+                        topRank = rule.precedence;
+                    } else {
+                        keystack.push(word);
+                    }
+                }
+                let substitute = rule.applyWordSubstitution(word);
+                this.tracer.wordSubstitution(word, substitute);
+                words[i] = substitute;
+            }
+        }
+        this.tracer.subclauseComplete(join(words), keystack, this.rules);
+
+        this.memoryRule.clearTrace();
+        this.tracer.memoryStack(this.memoryRule.traceMemoryStack());
+        if (keystack.length === 0) {
+            if (this.limit === 4 && this.memoryRule.memoryExists()) {
+                this.tracer.usingMemory(this.memoryRule.toString());
+                return this.memoryRule.recallMemory();
+            }
+        }
+
+        let transformationCount = 0;
+        globalInterruptElizaResponse = false;
+        while (keystack.length > 0) {
+            await delay();
+            if (globalInterruptElizaResponse) {
+                globalInterruptElizaResponse = false;
+                return '--ELIZA response creation interrupted--';
+            }
+            const topKeyword = keystack.shift();
+            this.tracer.preTransform(topKeyword, words);
+
+            if (!this.rules.has(topKeyword)) {
+                this.tracer.unknownKey(topKeyword, true);
+                return this.noMatchMessages[this.limit - 1];
+            }
+
+            if (this.transformationLimit !== 0 && transformationCount++ > this.transformationLimit) {
+                return `--transformation limit reached (*maxtran ${this.transformationLimit})--`;
+            }
+
+            const rule = this.rules.get(topKeyword);
+            this.memoryRule.createMemory(topKeyword, words, this.tags);
+            this.tracer.createMemory(this.memoryRule.traceText());
+
+            const [ action, response, link ] = rule.applyTransformation(words, this.tags);
+            this.tracer.transform(rule.traceText(), rule.toString());
+            if (action === ACTION_COMPLETE) {
+                return join(response);
+            }
+
+            if (action === ACTION_INAPPLICABLE) {
+                this.tracer.decompFailed(true);
+                return this.noMatchMessages[this.limit - 1];
+            }
+
+            if (action === ACTION_LINKKEY) {
+                words = response;
+                keystack.unshift(link);
+            }
+            else if (keystack.length === 0) {
+                this.tracer.newkeyFailed('NONE');
+                //return this.noMatchMessages[this.limit - 1]; TBD
+                break;
+            }
+        }
+
+        const noneRule = this.rules.get(SPECIAL_RULE_NONE);
+        const [ action, response ] = noneRule.applyTransformation(words, this.tags);
+        console.assert(action === ACTION_COMPLETE);
+        this.tracer.usingNone(noneRule.toString());
+        return join(response);
+    }
+}
+
+
+ //////// //       //// ////////    ///     //////   //////  ////////  //// ////////  //////// 
+ //       //        //       //    // //   //    // //    // //     //  //  //     //    //    
+ //       //        //      //    //   //  //       //       //     //  //  //     //    //    
+ //////   //        //     //    //     //  //////  //       ////////   //  ////////     //    
+ //       //        //    //     /////////       // //       //   //    //  //           //    
+ //       //        //   //      //     // //    // //    // //    //   //  //           //    
+ //////// //////// //// //////// //     //  //////   //////  //     // //// //           //    
+
+
+
+class Script {
+    constructor() {
+        // ELIZA's opening remarks e.g. "HOW DO YOU DO.  PLEASE TELL ME YOUR PROBLEM"
+        this.helloMessage = [];
+
+        // maps keywords -> transformation rules
+        this.rules = new Map();
+
+        // the one and only special case MEMORY rule
+        this.memoryRule = new RuleMemory();
+    }
+};
+
+
+function scriptToString(s) {
+    let txt = "(" + join(s.helloMessage) + ")\n";
+    const rules = new Map([...s.rules.entries()].sort());
+    for (const [key, value] of rules) {
+        txt += value.toString();
+    }
+    txt += s.memoryRule.toString();
+    return txt;
+}
+
+
+class Token {
+    constructor(t = 'eof', value = '') {
+        this.t = t;
+        this.value = value;
+    }
+    symbol(v) {
+        if (v) {
+            return this.t === 'symbol' && this.value === v;
+        }
+        return this.t === 'symbol';
+    }
+    number() {
+        return this.t === 'number';
+    }
+    open() {
+        return this.t === 'open_bracket';
+    }
+    close() {
+        return this.t === 'close_bracket';
+    }
+    eof() {
+        return this.t === 'eof';
+    }
+    equals(rhs) {
+        return this.t === rhs.t && this.value === rhs.value;
+    }
+}
+
+class Tokenizer {
+    constructor(scriptText) {
+        this.scriptText = scriptText;
+        this.script = new Script;
+        this.t = new Token();
+        this.got_token = false;
+        this.buf = [];
+        this.bufptr = 0;
+        this.line_number = 1;
+    }
+    peektok() {
+        if (this.got_token) {
+            return this.t;
+        }
+        this.got_token = true;
+        return this.t = this.readtok();
+    }
+    nexttok() {
+        if (this.got_token) {
+            this.got_token = false;
+            return this.t;
+        }
+        return this.readtok();
+    }
+    readtok() {
+        let ch = '';
+        for (;;) {
+            do { // skip whitespace
+                if (this.eof())
+                    return new Token('eof');
+                ch = this.nextch();
+                if (this.is_newline(ch))
+                    this.consume_newline(ch);
+            } while (this.is_whitespace(ch));
+            if (ch != ';')
+                break;
+            do { // skip comment
+                if (this.eof())
+                    return new Token('eof');
+                ch = this.nextch();
+            } while (!this.is_newline(ch));
+            this.consume_newline(ch);
+        }
+
+        if (ch == '(')
+            return new Token('open_bracket');
+
+        if (ch == ')')
+            return new Token('close_bracket');
+
+        if (ch == '=')
+            return new Token('symbol', '=');
+
+        if (this.is_digit(ch)) {
+            let t = new Token('number');
+            t.value += ch;
+            while (!this.eof()) {
+                ch = this.peekch();
+                if (!this.is_digit(ch)) {
+                    break;
+                }
+                t.value += ch;
+                this.nextch();
+            }
+            return t;
+        }
+
+        // anything else is a symbol
+        let t = new Token('symbol');
+        t.value += ch;
+        while (!this.eof()) {
+            ch = this.peekch();
+            if (this.non_symbol(ch) || ch === '=') {
+                break;
+            }
+            t.value += ch;
+            ch = this.nextch();
+        }
+        t.value = elizaUppercase(t.value);
+        return t;
+    }
+    eof() {
+        return this.bufptr === this.scriptText.length;
+    }
+    nextch() {
+        console.assert(!this.eof());
+        return this.scriptText[this.bufptr++];
+    }
+    peekch() {
+        console.assert(!this.eof());
+        return this.scriptText[this.bufptr];
+    }
+    is_whitespace(ch) {
+        return ch <= ' ' || ch == '\x7F';
+        // this must hold: is_newline(ch) implies is_whitespace(ch)
+    }
+    is_newline(ch) {
+        return ch === '\x0A'     // LF
+            || ch === '\x0B'     // VT
+            || ch === '\x0C'     // FF
+            || ch === '\x0D';    // CR
+    }
+    consume_newline(ch) {
+        if (ch === '\x0D' && !this.eof() && this.peekch(ch) === '\x0A') {
+            this.nextch(ch); // CR/LF is one line ending
+        }
+        this.line_number++;
+    }
+    is_digit(ch) {
+        return ch.length == 1 && ch >= '0' && ch <= '9';
+    }
+    non_symbol(ch) {
+        return ch === '(' || ch === ')' || ch === ';' || this.is_whitespace(ch);
+    }
+}
+
+
+class ElizaScriptReader {
+    constructor(scriptText) {
+        this.tok = new Tokenizer(scriptText);
+        this.script = new Script;
+        this.occurrencesOfReferences = [];
+
+        this.script.helloMessage = this.rdlist();
+        if (this.tok.peektok().symbol("START")) {
+            this.tok.nexttok();
+        }
+
+        while (this.readRule())
+            ;
+
+        // Check if the script meets the minimum requirements
+        if (!this.script.rules.has(SPECIAL_RULE_NONE)) {
+            throw new Error("Script error: no NONE rule specified; see Jan 1966 CACM page 41");
+        }
+        if (!this.script.memoryRule.keyword) {
+            throw new Error("Script error: no MEMORY rule specified; see Jan 1966 CACM page 41");
+        }
+        if (!this.script.rules.has(this.script.memoryRule.keyword)) {
+            throw new Error(`Script error: MEMORY rule keyword '${this.script.memoryRule.keyword}' is not also a keyword in its own right; see Jan 1966 CACM page 41`);
+        }
+        for (const [lineNumber, referencedKeyword] of this.occurrencesOfReferences) {
+            if (!this.script.rules.has(referencedKeyword)) {
+                throw new Error(`Script error on line ${lineNumber}: '=${referencedKeyword}' referenced keyword does not exist`);
+            }
+            if (!this.script.rules.get(referencedKeyword).hasTransformation()) {
+                throw new Error(`Script error on line ${lineNumber}: '=${referencedKeyword}' referenced keyword has no associated transformation rules`);
+            }
+        }
+    }
+
+    readRule() {
+        let t = this.tok.nexttok();
+        if (t.eof()) {
+            return false;
+        }
+        if (!t.open()) {
+            throw new Error(this.errormsg("expected '('"));
+        }
+        t = this.tok.peektok();
+        if (t.close()) {
+            this.tok.nexttok();
+            return true;
+        }
+        if (!t.symbol()) {
+            throw new Error(this.errormsg("expected keyword|MEMORY|NONE"));
+        }
+        if (t.value === "MEMORY") {
+            return this.readMemoryRule();
+        }
+        return this.readKeywordRule();
+    }
+
+    readKeywordRule() {
+        let keyword = "";
+        let msg_keyword = "";
+        let keywordSubstitution = "";
+        let precedence = 0;
+        let tags = [];
+        let transformation = [];
+        let className = "";
+
+        let t = this.tok.nexttok();
+        msg_keyword = keyword = t.value;
+        if (keyword === "NONE") {
+            keyword = SPECIAL_RULE_NONE;
+        }
+        if (this.script.rules.has(keyword)) {
+            throw new Error(this.errormsg(`keyword rule already specified for keyword '${msg_keyword}'`));
+        }
+        if (this.tok.peektok().close()) {
+            throw new Error(this.errormsg(`keyword '${msg_keyword}' has no associated body`));
+        }
+
+        for (t = this.tok.nexttok(); !t.close(); t = this.tok.nexttok()) {
+            if (t.symbol("=")) {
+                t = this.tok.nexttok();
+                if (!t.symbol()) {
+                    throw new Error(this.errormsg("expected keyword"));
+                }
+                keywordSubstitution = t.value;
+            } else if (t.number()) {
+                precedence = parseInt(t.value);
+            } else if (t.symbol("DLIST")) {
+                t = this.tok.nexttok();
+                if (t.eof() || !t.open())
+                    throw new Error(this.errormsg("expected '('"));
+                t = this.tok.nexttok();
+                if (!t.symbol() || !t.value.startsWith('/'))
+                    throw new Error(this.errormsg("expected '/'"));
+                if (t.value.length > 1) {
+                    let tag = t.value.substring(1);
+                    tags = this.rdlist(false);
+                    tags.unshift(tag);
+                }
+                else {
+                    tags = this.rdlist(false);
+                }
+            } else if (t.open()) {
+                t = this.tok.peektok();
+                if (t.symbol("=")) {
+                    this.tok.nexttok();
+                    t = this.tok.nexttok();
+                    if (!t.symbol()) {
+                        throw new Error(this.errormsg("expected equivalence class name"));
+                    }
+                    className = t.value;
+                    this.occurrencesOfReferences.push([this.tok.line_number, t.value]);
+
+                    if (!this.tok.nexttok().close()) {
+                        throw new Error(this.errormsg("expected ')'"));
+                    }
+                    if (!this.tok.peektok().close()) {
+                        throw new Error(this.errormsg("expected ')'"));
+                    }
+                } else {
+                    let trans = {
+                        decomposition: this.rdlist(),
+                        reassembly: []
+                    };
+                    if (trans.decomposition.length == 0)
+                        throw new Error(this.errormsg("decompose pattern cannot be empty"));
+                    while (this.tok.peektok().open()) {
+                        const reassembly = this.readReassembly();
+                        const [valid, message] = reassemblyIndexesValid(trans.decomposition, reassembly);
+                        if (!valid) {
+                            throw new Error(this.errormsg(message));
+                        }
+                        trans.reassembly.push(reassembly);
+                    }
+                    if (!this.tok.nexttok().close()) {
+                        throw new Error(this.errormsg("expected ')'"));
+                    }
+                    transformation.push(trans);
+                }
+            } else {
+                throw new Error(this.errormsg("malformed rule"));
+            }
+        }
+
+        let r = new RuleKeyword(keyword, keywordSubstitution, precedence, tags, className);
+        for (let tr of transformation) {
+            r.addTransformationRule(tr.decomposition, tr.reassembly);
+        }
+        this.script.rules.set(keyword, r);
+
+        return true;
+    }
+
+    readReassembly() {
+        if (!this.tok.nexttok().open()) {
+            throw new Error(this.errormsg("expected '('"));
+        }
+
+        if (!this.tok.peektok().symbol("PRE")) {
+            const reassembly = this.rdlist(false);
+            if (reassembly.length != 0 && reassembly[0] == "=") {
+                if (reassembly.length != 2)
+                    throw new Error(this.errormsg("expected reference keyword to follow '='"));
+                this.occurrencesOfReferences.push([this.tok.line_number, reassembly[1]]);
+            }
+            return reassembly;
+        }
+
+        // It's a PRE reassembly, e.g. (PRE (I ARE 3) (=YOU))
+        this.tok.nexttok(); // skip "PRE"
+        const pre = ["(", "PRE"];
+        const reconstruct = this.rdlist();
+        const reference = this.rdlist();
+        if (reference.length !== 2 || reference[0] !== '=') {
+            throw new Error(this.errormsg("expected '(=reference)' in PRE rule"));
+        }
+        this.occurrencesOfReferences.push([this.tok.line_number, reference[1]]);
+
+        pre.push("(", ...reconstruct, ")");
+        pre.push("(", ...reference, ")");
+        pre.push(")");
+
+        if (!this.tok.nexttok().close()) {
+            throw new Error(this.errormsg("expected ')'"));
+        }
+
+        return pre;
+    }
+
+    readMemoryRule() {
+        let t = this.tok.nexttok();
+        console.assert(t.symbol("MEMORY"));
+
+        t = this.tok.nexttok();
+        if (!t.symbol()) {
+            throw new Error(this.errormsg("expected keyword to follow MEMORY; expected form is (MEMORY keyword (decomp1=reassm1)(decomp2=reassm2)(decomp3=reassm3)(decomp4=reassm4))"));
+        }
+
+        if (this.script.memoryRule.keyword) {
+            throw new Error(this.errormsg("multiple MEMORY rules specified"));
+        }
+
+        this.script.memoryRule.keyword = t.value;
+
+        for (let i = 0; i < 4; ++i) {
+            if (!this.tok.nexttok().open()) {
+                throw new Error(this.errormsg("expected '('; expected form is (MEMORY keyword (decomp1=reassm1)(decomp2=reassm2)(decomp3=reassm3)(decomp4=reassm4))"));
+            }
+
+            const decomposition = [];
+            for (t = this.tok.nexttok(); !t.symbol("=") && !t.eof(); t = this.tok.nexttok()) {
+                decomposition.push(t.value);
+            }
+            if (decomposition.length === 0) {
+                throw new Error(this.errormsg("expected 'decompose_terms = reassemble_terms'"));
+            }
+            if (!t.symbol("=")) {
+                throw new Error(this.errormsg("expected '='; expected form is (MEMORY keyword (decomp1=reassm1)(decomp2=reassm2)(decomp3=reassm3)(decomp4=reassm4))"));
+            }
+
+            const reassembly = [];
+            for (t = this.tok.nexttok(); !t.close() && !t.eof(); t = this.tok.nexttok()) {
+                reassembly.push(t.value);
+            }
+            if (reassembly.length === 0) {
+                throw new Error(this.errormsg("expected 'decompose_terms = reassemble_terms'"));
+            }
+            if (!t.close()) {
+                throw new Error(this.errormsg("expected ')'; expected form is (MEMORY keyword (decomp1=reassm1)(decomp2=reassm2)(decomp3=reassm3)(decomp4=reassm4))"));
+            }
+            const [valid, message] = reassemblyIndexesValid(decomposition, reassembly);
+            if (!valid) {
+                throw new Error(this.errormsg(message));
+            }
+            const reassembly_rules = [];
+            reassembly_rules.push(reassembly);
+
+            this.script.memoryRule.addTransformationRule(decomposition, reassembly_rules);
+        }
+
+        if (!this.tok.nexttok().close()) {
+            throw new Error(this.errormsg("expected ')'; expected form is (MEMORY keyword (decomp1=reassm1)(decomp2=reassm2)(decomp3=reassm3)(decomp4=reassm4))"));
+        }
+
+        return true;
+    }
+
+    errormsg(msg) {
+        return `Script error on line ${this.tok.line_number}: ${msg}`;
+    }
+
+    rdlist(prior = true) {
+        let s = [];
+        let t = this.tok.nexttok();
+        if (prior) {
+            if (!t.open()) {
+                throw new Error(this.errormsg("expected '('"));
+            }
+            t = this.tok.nexttok();
+        }
+        while (!t.close()) {
+            if (t.symbol() || t.number()) {
+                s.push(t.value);
+            } else if (t.open()) {
+                let sublist = "";
+                t = this.tok.nexttok();
+                while (!t.close()) {
+                    if (!t.symbol()) {
+                        throw new Error(this.errormsg("expected symbol"));
+                    }
+                    if (sublist.length > 0) {
+                        sublist += ' ';
+                    }
+                    sublist += t.value;
+                    t = this.tok.nexttok();
+                }
+                s.push(`(${sublist})`);
+            } else {
+                throw new Error(this.errormsg("expected ')'"));
+            }
+            t = this.tok.nexttok();
+        }
+        return s;
+    }
+}
+
+
+function readScript(scriptText) {
+    try {
+        const scriptReader = new ElizaScriptReader(scriptText);
+        return ['success', scriptReader.script];
+    }
+    catch(e) {
+        return [e.message];
+    }
+}
+
+
+</script>
+
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var sheet = $('sheet'), stateEl = $('state'), form = $('say'), q = $('q'),
+      sendBtn = $('send'), hint = $('hint'), demoBtn = $('demo'), resetBtn = $('reset');
+
+  // Collects what the engine reports through its tracer hooks, as data instead of text.
+  class XRay extends nullTracer {
+    constructor() { super(); this.clear(); }
+    clear() {
+      this.d = { tokens: [], limit: 0, subs: [], clause: '', stack: [], steps: [],
+                 newMemory: null, usedMemory: false, usedNone: false, nomatch: false };
+    }
+    beginResponse(words) { this.clear(); this.d.tokens = words.slice(); }
+    limit(n) { this.d.limit = n; }
+    wordSubstitution(word, substitute) { if (word !== substitute) this.d.subs.push([word, substitute]); }
+    discardSubclause() { this.d.subs = []; }
+    subclauseComplete(subclause, keystack, rules) {
+      this.d.clause = subclause;
+      this.d.stack = keystack.map(function (k) {
+        return { k: k, p: rules.has(k) ? rules.get(k).precedence : 0 };
+      });
+    }
+    createMemory(t) {
+      var m = /new memory: (.*)\n/.exec(t);
+      if (m) this.d.newMemory = m[1];
+    }
+    usingMemory() { this.d.usedMemory = true; }
+    transform(t) {
+      var g = function (re) { var m = re.exec(t); return m ? m[1] : null; };
+      var parts = [], pm, re = /(\d+):"([^"]*)"/g, ps = g(/decomposition parts: (.*)\n/);
+      if (ps) { while ((pm = re.exec(ps))) parts.push(pm[2]); }
+      this.d.steps.push({
+        keyword: g(/selected keyword: (.*)\n/),
+        link: g(/reference to equivalence class: (.*)\n/),
+        pattern: g(/matching decompose pattern: \((.*)\)\n/),
+        parts: parts,
+        rule: g(/selected reassemble rule: \((.*)\)\n/)
+      });
+    }
+    unknownKey() { this.d.nomatch = true; }
+    decompFailed() { this.d.nomatch = true; }
+    usingNone() { this.d.usedNone = true; }
+  }
+
+  var tape = $('tape100').textContent;
+  var xray, eliza, script, busy = false, turns = 0;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function line(who, text, cls) {
+    var t = el('div', 'turn ' + cls);
+    t.appendChild(el('span', 'who', who));
+    t.appendChild(el('span', 'line', text));
+    sheet.appendChild(t);
+    return t;
+  }
+
+  function row(k, vNode) {
+    var r = el('div', 'row');
+    r.appendChild(el('span', 'k', k));
+    var v = el('span', 'v');
+    if (typeof vNode === 'string') v.textContent = vNode; else v.appendChild(vNode);
+    r.appendChild(v);
+    return r;
+  }
+
+  function frag() { return document.createDocumentFragment(); }
+
+  function explain(d, memories) {
+    var det = el('details', 'xray');
+    det.open = true;
+    det.appendChild(el('summary', null, '它是怎么回的'));
+    var body = el('div', 'body');
+
+    var verdict;
+    if (d.usedMemory) verdict = '没找到关键词，计数器正好走到 4，记忆里有存货：翻出最早存的一句。';
+    else if (d.nomatch) verdict = '找到了关键词，但规则没套上：用内置的应付句。';
+    else if (d.usedNone && d.stack.length === 0) verdict = '没找到关键词：用备用句里的下一句。';
+    else if (d.usedNone) verdict = '关键词规则没给出回复：用备用句里的下一句。';
+    else verdict = '命中关键词，按它的规则拆开再拼回去。';
+    body.appendChild(el('div', 'verdict', verdict));
+
+    body.appendChild(row('读入', (function () { return el('span', 'tok', d.tokens.join(' ')); })()));
+
+    if (d.subs.length) {
+      body.appendChild(row('换词', (function () {
+        return el('span', 'tok', d.subs.map(function (s) { return s[0] + '→' + s[1]; }).join('　'));
+      })()));
+    }
+
+    var f = frag();
+    if (d.stack.length) {
+      d.stack.forEach(function (s, i) {
+        var c = el('span', 'chip' + (i === 0 ? ' win' : ''));
+        c.appendChild(document.createTextNode(s.k + ' '));
+        c.appendChild(el('small', null, '级别 ' + s.p));
+        f.appendChild(c);
+      });
+      if (d.stack.length > 1) f.appendChild(document.createTextNode('级别最高的排第一。'));
+    } else {
+      f.appendChild(document.createTextNode('一个也没有'));
+    }
+    body.appendChild(row('关键词', f));
+
+    d.steps.forEach(function (s) {
+      if (s.link && !s.pattern) {
+        body.appendChild(row('规则', s.keyword + ' 没有自己的规则，转用 ' + s.link + ' 的'));
+        return;
+      }
+      if (!s.pattern) return;
+      var p = frag();
+      p.appendChild(el('span', 'tok', '(' + s.pattern + ')'));
+      p.appendChild(document.createTextNode('　0 代表任意多个词'));
+      body.appendChild(row('拆解模板', p));
+      var parts = frag();
+      s.parts.forEach(function (x, i) {
+        var c = el('span', 'chip');
+        c.appendChild(el('small', null, (i + 1) + ' '));
+        c.appendChild(document.createTextNode(x === '' ? '（空）' : x));
+        parts.appendChild(c);
+      });
+      body.appendChild(row('拆成', parts));
+      if (s.rule) {
+        var r = frag();
+        r.appendChild(el('span', 'tok', '(' + s.rule + ')'));
+        if (/\d/.test(s.rule)) r.appendChild(document.createTextNode('　数字指上面第几段'));
+        body.appendChild(row('重组模板', r));
+      }
+    });
+
+    var mem = frag();
+    if (d.newMemory) {
+      mem.appendChild(document.createTextNode('这句存进去了：'));
+      mem.appendChild(el('span', 'tok', d.newMemory));
+      mem.appendChild(el('br'));
+    }
+    if (d.usedMemory) {
+      mem.appendChild(document.createTextNode('刚取出一句，现在还剩 ' + memories.length + ' 句。'));
+    } else {
+      mem.appendChild(document.createTextNode('现在存着 ' + memories.length + ' 句。'));
+    }
+    body.appendChild(row('记忆', mem));
+    body.appendChild(row('计数器', d.limit + ' / 4' + (d.limit === 4 ? '　只有这一格会去翻记忆' : '')));
+
+    det.appendChild(body);
+    return det;
+  }
+
+  function renderState() {
+    stateEl.textContent = '';
+    var a = el('span');
+    a.appendChild(document.createTextNode('计数器'));
+    var pips = el('span', 'pips');
+    for (var i = 1; i <= 4; i++) {
+      pips.appendChild(el('span', 'pip' + (i === 4 ? ' four' : '') + (turns > 0 && i <= eliza.limit ? ' on' : '')));
+    }
+    a.appendChild(pips);
+    a.appendChild(el('b', null, (turns > 0 ? eliza.limit : 0) + ' / 4'));
+    stateEl.appendChild(a);
+    var b = el('span');
+    b.appendChild(document.createTextNode('记忆里存着 '));
+    b.appendChild(el('b', null, String(eliza.memoryRule.memories.length)));
+    b.appendChild(document.createTextNode(' 句'));
+    stateEl.appendChild(b);
+    stateEl.appendChild(el('span', null, '每输入一句，计数器走一格'));
+  }
+
+  function start() {
+    var res = readScript(tape);
+    sheet.textContent = '';
+    if (res[0] !== 'success') {
+      line('出错', '剧本没能读入：' + res[0], 'eliza');
+      return false;
+    }
+    script = res[1];
+    xray = new XRay();
+    eliza = new Eliza(script.rules, script.memoryRule, xray, 500);
+    turns = 0;
+    line('ELIZA', join(script.helloMessage), 'eliza');
+    sheet.appendChild(el('div', 'gap'));
+    renderState();
+    hint.textContent = '';
+    return true;
+  }
+
+  function setBusy(b) {
+    busy = b;
+    sendBtn.disabled = b; demoBtn.disabled = b; resetBtn.disabled = b;
+    Array.prototype.forEach.call(document.querySelectorAll('.try'), function (x) { x.disabled = b; });
+  }
+
+  function say(text) {
+    text = String(text || '').trim();
+    if (!text || !eliza) return Promise.resolve();
+    Array.prototype.forEach.call(sheet.querySelectorAll('details.xray'), function (x) { x.open = false; });
+    line('你', text, 'user');
+    hint.textContent = /[㐀-鿿]/.test(text)
+      ? '它只认英文关键词，中文会被当成一句没有关键词的话。'
+      : '';
+    return eliza.response(text).then(function (reply) {
+      turns++;
+      line('ELIZA', reply, 'eliza');
+      sheet.appendChild(explain(xray.d, eliza.memoryRule.memories.slice()));
+      renderState();
+      var last = sheet.lastElementChild;
+      if (last && last.scrollIntoView) {
+        try { last.scrollIntoView({ block: 'nearest' }); } catch (e) { /* older browsers */ }
+      }
+    });
+  }
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (busy) return;
+    var text = q.value;
+    q.value = '';
+    setBusy(true);
+    say(text).then(function () { setBusy(false); q.focus(); }, function () { setBusy(false); });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('.try'), function (b) {
+    b.addEventListener('click', function () {
+      if (busy) return;
+      setBusy(true);
+      say(b.getAttribute('data-say')).then(function () { setBusy(false); }, function () { setBusy(false); });
+    });
+  });
+
+  resetBtn.addEventListener('click', function () { if (!busy) start(); });
+
+  // Three sentences that exercise the three mechanisms in order. The third one has no
+  // keyword and is the third input after a restart, so the counter stands at 4.
+  var DEMO = ['My boss never listens to me.', 'I feel like nobody cares.', 'Deadlines.'];
+  demoBtn.addEventListener('click', function () {
+    if (busy) return;
+    if (!start()) return;
+    setBusy(true);
+    var p = Promise.resolve();
+    DEMO.forEach(function (s) { p = p.then(function () { return say(s); }); });
+    p.then(function () { setBusy(false); }, function () { setBusy(false); });
+  });
+
+  start();
+})();
+</script>
+</body>
+</html>
